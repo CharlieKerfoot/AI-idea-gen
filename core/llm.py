@@ -72,7 +72,7 @@ class AnthropicProvider(LLMProvider):
     def call(self, system_prompt: str, user_message: str, model: str) -> str:
         message = self.client.messages.create(
             model=model,
-            max_tokens=4096,
+            max_tokens=16384,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}],
         )
@@ -100,7 +100,7 @@ class OpenAIProvider(LLMProvider):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            max_tokens=4096,
+            max_tokens=16384,
         )
         return response.choices[0].message.content
 
@@ -148,12 +148,14 @@ def extract_json(text: str) -> dict[str, Any]:
     2. Parse entire response as raw JSON
     3. Balanced-brace finder for JSON embedded in text
     """
-    # Tier 1: code fence
-    fence_match = re.search(r"```json\s*\n(.*?)\n\s*```", text, re.DOTALL)
-    if fence_match:
+    # Tier 1: code fence — find ```json, then use balanced-brace extraction
+    # from that point (handles embedded ``` inside JSON string values)
+    fence_start = text.find("```json")
+    if fence_start != -1:
+        json_region = text[fence_start + len("```json"):]
         try:
-            return json.loads(fence_match.group(1))
-        except json.JSONDecodeError:
+            return _extract_braced_json(json_region)
+        except ValueError:
             pass
 
     # Tier 2: raw JSON
@@ -162,22 +164,55 @@ def extract_json(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
-    # Tier 3: balanced-brace finder
-    start = text.find("{")
-    if start != -1:
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[start : i + 1])
-                    except json.JSONDecodeError:
-                        break
+    # Tier 3: balanced-brace finder on full text
+    try:
+        return _extract_braced_json(text)
+    except ValueError:
+        pass
 
     raise ValueError(f"Could not extract JSON from response: {text[:200]}...")
+
+
+def _extract_braced_json(text: str) -> dict[str, Any]:
+    """Find the first valid JSON object using string-aware brace matching."""
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No opening brace found")
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if escape:
+            escape = False
+            continue
+
+        if ch == "\\":
+            if in_string:
+                escape = True
+            continue
+
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start : i + 1])
+                except json.JSONDecodeError:
+                    raise ValueError("Matched braces but invalid JSON")
+
+    raise ValueError("No balanced JSON object found")
 
 
 # ── LLM Client ───────────────────────────────────────────────────

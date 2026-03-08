@@ -62,7 +62,7 @@ class VaultManager:
                     title = line[2:].strip()
                     break
 
-            tags = fm.get("tags", [])
+            tags = fm.get("tags") or []
             if isinstance(tags, str):
                 tags = [t.strip() for t in tags.split(",")]
 
