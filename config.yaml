@@ -1,0 +1,48 @@
+vault:
+  path: "~/Obsidian/The Simple Soul/"
+  idea_engine_folder: "_idea-engine"
+  scan_glob: "**/*.md"
+  exclude_folders:
+    - "_idea-engine"
+    - "templates"
+    - ".obsidian"
+    - ".trash"
+
+dev:
+  experiments_path: "~/dev/experiments"
+  approved_path: "~/dev/projects"
+
+engine:
+  run_interval_minutes: 60
+  ideas_per_run: 3
+  max_vault_context_notes: 30
+  context_selection: "recent_and_random"
+
+agents:
+  generator_model: "claude-opus-4-6"
+  essay_judge_model: "claude-opus-4-6"
+  startup_judge_model: "claude-opus-4-6"
+  experiment_eval_model: "claude-opus-4-6"
+  essay_judge_council: false
+  council_models:
+    - provider: "anthropic"
+      model: "claude-opus-4-6"
+    - provider: "openai"
+      model: "gpt-4o"
+    - provider: "google"
+      model: "gemini-1.5-pro"
+
+thresholds:
+  essay_min_score: 6.5
+  essay_weights:
+    novelty_general: 0.3
+    novelty_vs_vault: 0.2
+    interest: 0.3
+    argument_quality: 0.2
+  startup_min_viability: 6.0
+  startup_weights:
+    problem_acuity: 0.25
+    insight_non_obviousness: 0.25
+    experiment_tractability: 0.30
+    market_signal: 0.20
+  experiment_success_threshold: 6.0
