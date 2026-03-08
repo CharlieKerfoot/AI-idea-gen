@@ -1,6 +1,6 @@
-# Obsidian Idea Engine
+# Idea Engine
 
-A multi-agent system that reads your Obsidian vault, generates novel essay and startup ideas via Claude, judges them with independent agents (to prevent self-censorship bias), writes approved essays back into your vault, and scaffolds minimal experiments for viable startup ideas.
+A multi-agent system that reads your notes and ideas (Obsidian vault), generates novel essay and startup ideas, judges them with independent agents (to prevent self-censorship bias), writes approved essays back into your vault, and scaffolds minimal experiments for viable startup ideas.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -76,7 +76,7 @@ Each run follows this pipeline:
 
 2. **Scan vault** — Reads your Obsidian notes, selects a mix of recent and random notes as context (configurable via `context_selection` in config).
 
-3. **Generate ideas** (Agent 1) — Claude reads the vault context and generates essay ideas and startup ideas. The generator is explicitly instructed to be maximally creative with no self-censoring. Previously generated titles are excluded to prevent repetition.
+3. **Generate ideas** (Agent 1) — Reads the vault context and generates essay ideas and startup ideas. The generator is explicitly instructed to be maximally creative with no self-censoring. Previously generated titles are excluded to prevent repetition.
 
 4. **Judge essay ideas** (Agent 2) — Each essay idea is scored independently on novelty, interest, and argument quality. The judge never sees the generator's self-assessed connections (blind evaluation). Ideas scoring above the threshold (default 6.5/10) are written to `_idea-engine/essays/` in your vault.
 
