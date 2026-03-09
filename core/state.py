@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +10,40 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+# ── Keyword Extraction ──────────────────────────────────────────
+
+STOPWORDS: set[str] = {
+    "that", "this", "with", "from", "have", "been", "were", "will",
+    "would", "could", "should", "their", "there", "they", "them",
+    "then", "than", "what", "when", "where", "which", "while",
+    "about", "after", "before", "between", "into", "through",
+    "during", "each", "some", "other", "more", "most", "also",
+    "just", "only", "very", "much", "such", "like", "over",
+    "make", "made", "many", "does", "done", "being", "well",
+    "back", "even", "still", "here", "take", "come", "your",
+    "know", "want", "give", "find", "tell", "thing", "think",
+    "good", "look", "people", "year", "way", "these", "those",
+    "idea", "ideas", "essay", "startup", "experiment", "note",
+    "notes", "vault", "engine", "generated", "novel", "approach",
+    "system", "based", "using", "used", "work", "need", "new",
+}
+
+
+def extract_keywords(text: str) -> list[str]:
+    """Lowercase, split on non-alpha, filter stopwords + words < 4 chars, deduplicate."""
+    words = re.split(r"[^a-zA-Z]+", text.lower())
+    seen: set[str] = set()
+    result: list[str] = []
+    for w in words:
+        if len(w) >= 4 and w not in STOPWORDS and w not in seen:
+            seen.add(w)
+            result.append(w)
+    return result
+
+
+# ── Models ──────────────────────────────────────────────────────
 
 
 class PendingExperiment(BaseModel):
@@ -21,6 +56,14 @@ class PendingExperiment(BaseModel):
     hypothesis: str
     falsification_criteria: str
     experiment_path: str
+
+
+class QuarantinedNote(BaseModel):
+    """A note quarantined from context selection for temporal isolation."""
+
+    path: str
+    quarantined_at_run: int
+    release_after_run: int
 
 
 class RunRecord(BaseModel):
@@ -44,6 +87,9 @@ class EngineState(BaseModel):
     pending_experiments: list[PendingExperiment] = Field(default_factory=list)
     vault_hash: str = ""
     last_run: datetime | None = None
+    concept_frequencies: dict[str, int] = Field(default_factory=dict)
+    quarantined_notes: list[QuarantinedNote] = Field(default_factory=list)
+    run_count: int = 0
 
 
 class StateManager:
@@ -109,4 +155,50 @@ class StateManager:
         """Remove a pending experiment by slug."""
         self.state.pending_experiments = [
             exp for exp in self.state.pending_experiments if exp.slug != slug
+        ]
+
+    # ── Novelty Decay ───────────────────────────────────────────
+
+    def record_concepts(self, text: str):
+        """Extract keywords from text and increment frequency counts."""
+        keywords = extract_keywords(text)
+        for kw in keywords:
+            self.state.concept_frequencies[kw] = (
+                self.state.concept_frequencies.get(kw, 0) + 1
+            )
+
+    def get_overused_concepts(self, threshold: int = 3) -> dict[str, int]:
+        """Return {concept: count} for concepts exceeding threshold."""
+        return {
+            concept: count
+            for concept, count in self.state.concept_frequencies.items()
+            if count > threshold
+        }
+
+    # ── Temporal Isolation ──────────────────────────────────────
+
+    def increment_run_count(self):
+        """Increment the run counter."""
+        self.state.run_count += 1
+
+    def quarantine_note(self, path: str, cycles: int):
+        """Quarantine a note for the given number of run cycles."""
+        self.state.quarantined_notes.append(
+            QuarantinedNote(
+                path=path,
+                quarantined_at_run=self.state.run_count,
+                release_after_run=self.state.run_count + cycles,
+            )
+        )
+
+    def get_quarantined_paths(self) -> set[str]:
+        """Return set of currently quarantined note paths."""
+        return {q.path for q in self.state.quarantined_notes}
+
+    def expire_quarantines(self):
+        """Remove quarantined notes whose release run has passed."""
+        self.state.quarantined_notes = [
+            q
+            for q in self.state.quarantined_notes
+            if q.release_after_run > self.state.run_count
         ]

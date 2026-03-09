@@ -18,6 +18,7 @@ from rich.table import Table
 from agents.essay_judge import EssayJudgeAgent
 from agents.generator import GeneratorAgent
 from agents.startup_judge import StartupJudgeAgent
+from core.entropy import fetch_entropy_concept
 from core.experiment import ExperimentScaffolder
 from core.llm import LLMClient
 from core.state import RunRecord, StateManager
@@ -97,6 +98,12 @@ def run_once(
     state_mgr = StateManager(config["vault"]["path"])
     llm = LLMClient(config)
     scaffolder = ExperimentScaffolder(config)
+    quarantine_cycles = config["engine"].get("quarantine_cycles", 3)
+    novelty_threshold = config["thresholds"].get("novelty_decay_threshold", 3)
+
+    # Temporal isolation: increment run count and expire old quarantines
+    state_mgr.increment_run_count()
+    state_mgr.expire_quarantines()
 
     essays_approved = 0
     essays_rejected = 0
@@ -158,11 +165,44 @@ def run_once(
 
     max_notes = config["engine"]["max_vault_context_notes"]
     strategy = config["engine"]["context_selection"]
+    quarantined_paths = state_mgr.get_quarantined_paths()
 
     with console.status("Scanning vault notes..."):
-        vault_notes = vault.select_context_notes(max_notes, strategy)
+        vault_notes = vault.select_context_notes(
+            max_notes, strategy, exclude_paths=quarantined_paths
+        )
 
     console.print(f"  Selected [cyan]{len(vault_notes)}[/] context notes")
+    if quarantined_paths:
+        console.print(
+            f"  Quarantined notes excluded: [yellow]{len(quarantined_paths)}[/]"
+        )
+
+    # ── Step 2b: Entropy injection ──────────────────────────
+    entropy_concept = None
+    if config.get("entropy", {}).get("enabled", True):
+        with console.status("Fetching entropy concept..."):
+            entropy_concept = fetch_entropy_concept(
+                config,
+                vault_notes=vault_notes,
+                run_count=state_mgr.state.run_count,
+            )
+        if entropy_concept:
+            console.print(
+                f"  Entropy: [magenta]{entropy_concept.title}[/] "
+                f"({entropy_concept.strategy}, {entropy_concept.domain})"
+            )
+        else:
+            console.print("  Entropy: [dim]none (fetch failed or disabled)[/]")
+
+    # ── Step 2c: Novelty decay ───────────────────────────────
+    overused = state_mgr.get_overused_concepts(novelty_threshold)
+    overused_list = sorted(overused.keys()) if overused else []
+    if overused_list:
+        console.print(
+            f"  Overused concepts: [yellow]{len(overused_list)}[/] "
+            f"({', '.join(overused_list[:5])}{'...' if len(overused_list) > 5 else ''})"
+        )
 
     # ── Step 3: Generate ideas ───────────────────────────────
     console.rule("[bold]Generating Ideas")
@@ -171,7 +211,11 @@ def run_once(
 
     with console.status(f"Generating {n_ideas} ideas per category..."):
         output = generator.generate(
-            vault_notes, state_mgr.state.seen_idea_titles, n_ideas
+            vault_notes,
+            state_mgr.state.seen_idea_titles,
+            n_ideas,
+            entropy_concept=entropy_concept,
+            overused_concepts=overused_list if overused_list else None,
         )
 
     ideas_generated = len(output.essay_ideas) + len(output.startup_ideas)
@@ -181,6 +225,12 @@ def run_once(
         idea.name for idea in output.startup_ideas
     ]
     state_mgr.add_seen_titles(all_titles)
+
+    # Record concepts for novelty decay tracking
+    for idea in output.essay_ideas:
+        state_mgr.record_concepts(f"{idea.title} {idea.hook} {idea.argument_sketch}")
+    for idea in output.startup_ideas:
+        state_mgr.record_concepts(f"{idea.name} {idea.problem} {idea.insight}")
 
     console.print(
         f"  Generated [cyan]{len(output.essay_ideas)}[/] essay ideas, "
@@ -217,7 +267,9 @@ def run_once(
         idea_dict = idea.model_dump()
 
         with console.status(f"  Judging: {idea.title[:40]}..."):
-            judgment = essay_judge.judge(idea_dict, vault_notes)
+            judgment = essay_judge.judge(
+                idea_dict, vault_notes, overused_concepts=overused or None
+            )
 
         verdict_style = "green" if judgment.verdict == "keep" else "red"
         essay_table.add_row(
@@ -232,6 +284,7 @@ def run_once(
                 path = vault.write_essay_idea(
                     idea_dict, judgment.model_dump(), run_id
                 )
+                state_mgr.quarantine_note(str(path), quarantine_cycles)
                 console.print(
                     Panel(
                         f"[green bold]{idea.title}[/]\n"
@@ -275,7 +328,9 @@ def run_once(
         idea_dict = idea.model_dump()
 
         with console.status(f"  Judging: {idea.name[:40]}..."):
-            judgment = startup_judge.judge_viability(idea_dict)
+            judgment = startup_judge.judge_viability(
+                idea_dict, overused_concepts=overused or None
+            )
 
         verdict_style = "green" if judgment.verdict == "viable" else "red"
         startup_table.add_row(
@@ -288,7 +343,10 @@ def run_once(
         if judgment.verdict == "viable":
             startups_approved += 1
             if not dry_run:
-                vault.write_startup_judgment(idea_dict, judgment.model_dump(), run_id)
+                startup_path = vault.write_startup_judgment(
+                    idea_dict, judgment.model_dump(), run_id
+                )
+                state_mgr.quarantine_note(str(startup_path), quarantine_cycles)
 
                 with console.status(f"  Scaffolding experiment: {idea.name}..."):
                     pending = startup_judge.scaffold_experiment(idea_dict)
@@ -338,12 +396,15 @@ def run_once(
 
     console.rule("[bold green]Run Complete")
     console.print(
-        f"  Essays: [green]{essays_approved} approved[/], "
+        f"  Run #{state_mgr.state.run_count} | "
+        f"Essays: [green]{essays_approved} approved[/], "
         f"[red]{essays_rejected} rejected[/]\n"
         f"  Startups: [green]{startups_approved} viable[/], "
         f"[red]{startups_rejected} rejected[/]\n"
         f"  Pending experiments: "
-        f"[cyan]{len(state_mgr.state.pending_experiments)}[/]"
+        f"[cyan]{len(state_mgr.state.pending_experiments)}[/] | "
+        f"Quarantined notes: "
+        f"[yellow]{len(state_mgr.state.quarantined_notes)}[/]"
     )
 
 

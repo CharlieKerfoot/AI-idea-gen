@@ -1,11 +1,14 @@
 """Agent 2: Essay Judge — ruthless, independent gatekeeper."""
 
+from __future__ import annotations
+
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from core import load_prompt
 from core.llm import CouncilResult, LLMClient
+from core.state import extract_keywords
 
 
 class EssayScores(BaseModel):
@@ -41,16 +44,32 @@ class EssayJudgeAgent:
         self.weights = config["thresholds"]["essay_weights"]
         self.min_score = config["thresholds"]["essay_min_score"]
         self.council_enabled = config["agents"].get("essay_judge_council", False)
+        self.novelty_decay_penalty = config["thresholds"].get(
+            "novelty_decay_penalty", 0.3
+        )
+        self.novelty_decay_threshold = config["thresholds"].get(
+            "novelty_decay_threshold", 3
+        )
 
-    def judge(self, idea: dict, vault_notes: list) -> EssayJudgment:
+    def judge(
+        self,
+        idea: dict,
+        vault_notes: list,
+        overused_concepts: dict[str, int] | None = None,
+    ) -> EssayJudgment:
         """Judge an essay idea. Uses council mode if enabled."""
         # Build user message — deliberately exclude connections (blind eval)
         user_message = self._build_user_message(idea, vault_notes)
 
         if self.council_enabled:
-            return self._judge_council(idea, user_message)
+            judgment = self._judge_council(idea, user_message)
         else:
-            return self._judge_single(idea, user_message)
+            judgment = self._judge_single(idea, user_message)
+
+        if overused_concepts:
+            judgment = self._apply_novelty_decay(judgment, idea, overused_concepts)
+
+        return judgment
 
     def _judge_single(self, idea: dict, user_message: str) -> EssayJudgment:
         raw = self.llm.call(self.system_prompt, user_message, self.model)
@@ -144,6 +163,40 @@ class EssayJudgeAgent:
             + scores.interest * self.weights["interest"]
             + scores.argument_quality * self.weights["argument_quality"]
         )
+
+    def _apply_novelty_decay(
+        self,
+        judgment: EssayJudgment,
+        idea: dict,
+        overused_concepts: dict[str, int],
+    ) -> EssayJudgment:
+        """Penalize novelty score for ideas that reuse overused concepts."""
+        # Extract keywords from idea text
+        idea_text = " ".join(
+            [
+                idea.get("title", ""),
+                idea.get("hook", ""),
+                idea.get("argument_sketch", ""),
+            ]
+        )
+        idea_keywords = set(extract_keywords(idea_text))
+
+        total_penalty = 0.0
+        for concept, count in overused_concepts.items():
+            if concept in idea_keywords:
+                total_penalty += self.novelty_decay_penalty * (
+                    count - self.novelty_decay_threshold
+                )
+
+        if total_penalty > 0:
+            new_novelty = max(0.0, judgment.scores.novelty_general - total_penalty)
+            judgment.scores.novelty_general = new_novelty
+            judgment.weighted_score = self._compute_weighted_score(judgment.scores)
+            judgment.verdict = (
+                "keep" if judgment.weighted_score >= self.min_score else "reject"
+            )
+
+        return judgment
 
     def _build_user_message(self, idea: dict, vault_notes: list) -> str:
         sections = []

@@ -17,6 +17,7 @@ engine:
   ideas_per_run: 3
   max_vault_context_notes: 30
   context_selection: "recent_and_random"
+  quarantine_cycles: 3
 
 agents:
   generator_model: "claude-opus-4-6"
@@ -45,4 +46,33 @@ thresholds:
     insight_non_obviousness: 0.25
     experiment_tractability: 0.30
     market_signal: 0.20
+  novelty_decay_threshold: 3
+  novelty_decay_penalty: 0.3
   experiment_success_threshold: 6.0
+
+entropy:
+  enabled: true
+  strategy: "curated_random"
+  curated_random:
+    domains:
+      - "mathematics"
+      - "evolutionary_biology"
+      - "architecture"
+      - "linguistics"
+      - "economic_history"
+      - "legal_theory"
+      - "physics"
+      - "music"
+      - "global_history"
+  arxiv_rotation:
+    schedule:
+      0: "math"
+      1: "q-bio"
+      2: "cs.AI"
+      3: "econ"
+      4: "physics.soc-ph"
+      5: "stat.ML"
+      6: "cond-mat"
+    max_results: 5
+  adjacent_possible:
+    fallback_domain: "mathematics"

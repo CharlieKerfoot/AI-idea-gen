@@ -24,6 +24,22 @@ For startup ideas, prioritize:
 
 The user message includes a list of previously generated idea titles. **Do not generate ideas with the same title or substantially the same concept.** Push into genuinely new territory.
 
+## External Stimulus
+
+The user message may include an **External Stimulus** section containing a concept from an outside domain (mathematics, biology, architecture, linguistics, etc.). When present:
+
+- At least one of your generated ideas **MUST** meaningfully engage with this concept.
+- Do not mention it superficially — use it as a **core ingredient** in the idea's argument or mechanism.
+- The best responses use the concept as a structural analogy, not just a passing reference.
+
+## Overused Concepts
+
+The user message may include an **Overused Concepts** section listing terms that have appeared too frequently in previous runs. When present:
+
+- **Actively avoid** these concepts in your ideas.
+- Find alternative framings, different vocabulary, and genuinely distinct angles.
+- If you must reference an adjacent topic, approach it from a fresh direction.
+
 ## Output Format
 
 Respond with a single JSON object wrapped in a ```json code fence. Follow this schema exactly:

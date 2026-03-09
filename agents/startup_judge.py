@@ -1,5 +1,7 @@
 """Agent 3: Startup Judge + Experiment Builder — three modes."""
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -8,7 +10,7 @@ from pydantic import BaseModel, Field
 from core import load_prompt
 from core.experiment import ExperimentFile, ExperimentScaffold, ExperimentScaffolder
 from core.llm import LLMClient
-from core.state import PendingExperiment
+from core.state import PendingExperiment, extract_keywords
 
 
 class StartupScores(BaseModel):
@@ -61,10 +63,20 @@ class StartupJudgeAgent:
         self.weights = config["thresholds"]["startup_weights"]
         self.min_viability = config["thresholds"]["startup_min_viability"]
         self.scaffolder = scaffolder
+        self.novelty_decay_penalty = config["thresholds"].get(
+            "novelty_decay_penalty", 0.3
+        )
+        self.novelty_decay_threshold = config["thresholds"].get(
+            "novelty_decay_threshold", 3
+        )
 
     # ── Mode A: Viability Judge ──────────────────────────────────
 
-    def judge_viability(self, idea: dict) -> StartupJudgment:
+    def judge_viability(
+        self,
+        idea: dict,
+        overused_concepts: dict[str, int] | None = None,
+    ) -> StartupJudgment:
         """Score a startup idea for viability."""
         user_message = self._build_mode_a_message(idea)
         raw = self.llm.call(self.system_prompt, user_message, self.model)
@@ -84,13 +96,18 @@ class StartupJudgeAgent:
         weighted = self._compute_weighted_score(scores)
         verdict = "viable" if weighted >= self.min_viability else "reject"
 
-        return StartupJudgment(
+        judgment = StartupJudgment(
             idea_name=idea.get("name", ""),
             scores=scores,
             weighted_score=weighted,
             verdict=verdict,
             reasoning=raw.get("reasoning", ""),
         )
+
+        if overused_concepts:
+            judgment = self._apply_novelty_decay(judgment, idea, overused_concepts)
+
+        return judgment
 
     # ── Mode B: Experiment Scaffolder ────────────────────────────
 
@@ -158,6 +175,43 @@ class StartupJudgeAgent:
         )
 
     # ── Private helpers ──────────────────────────────────────────
+
+    def _apply_novelty_decay(
+        self,
+        judgment: StartupJudgment,
+        idea: dict,
+        overused_concepts: dict[str, int],
+    ) -> StartupJudgment:
+        """Penalize insight_non_obviousness for ideas reusing overused concepts."""
+        idea_text = " ".join(
+            [
+                idea.get("name", ""),
+                idea.get("problem", ""),
+                idea.get("insight", ""),
+            ]
+        )
+        idea_keywords = set(extract_keywords(idea_text))
+
+        total_penalty = 0.0
+        for concept, count in overused_concepts.items():
+            if concept in idea_keywords:
+                total_penalty += self.novelty_decay_penalty * (
+                    count - self.novelty_decay_threshold
+                )
+
+        if total_penalty > 0:
+            new_score = max(
+                0.0, judgment.scores.insight_non_obviousness - total_penalty
+            )
+            judgment.scores.insight_non_obviousness = new_score
+            judgment.weighted_score = self._compute_weighted_score(judgment.scores)
+            judgment.verdict = (
+                "viable"
+                if judgment.weighted_score >= self.min_viability
+                else "reject"
+            )
+
+        return judgment
 
     def _compute_weighted_score(self, scores: StartupScores) -> float:
         """Compute weighted score from config weights."""

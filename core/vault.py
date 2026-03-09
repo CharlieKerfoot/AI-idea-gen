@@ -84,10 +84,15 @@ class VaultManager:
         return notes
 
     def select_context_notes(
-        self, n: int, strategy: str = "recent_and_random"
+        self,
+        n: int,
+        strategy: str = "recent_and_random",
+        exclude_paths: set[str] | None = None,
     ) -> list[VaultNote]:
         """Select n context notes using the specified strategy."""
         all_notes = self.scan_notes()
+        if exclude_paths:
+            all_notes = [n for n in all_notes if str(n.path) not in exclude_paths]
         if not all_notes:
             return []
         n = min(n, len(all_notes))

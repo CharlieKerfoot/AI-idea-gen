@@ -1,8 +1,11 @@
 """Agent 1: Idea Generator — maximally creative, no self-censorship."""
 
+from __future__ import annotations
+
 from pydantic import BaseModel, Field
 
 from core import load_prompt
+from core.entropy import EntropyConcept
 from core.llm import LLMClient
 
 
@@ -49,9 +52,13 @@ class GeneratorAgent:
         vault_notes: list,
         seen_titles: set[str],
         n_ideas: int,
+        entropy_concept: EntropyConcept | None = None,
+        overused_concepts: list[str] | None = None,
     ) -> GeneratorOutput:
         """Generate essay and startup ideas from vault context."""
-        user_message = self._build_user_message(vault_notes, seen_titles, n_ideas)
+        user_message = self._build_user_message(
+            vault_notes, seen_titles, n_ideas, entropy_concept, overused_concepts
+        )
         raw = self.llm.call(self.system_prompt, user_message, self.model)
 
         output = GeneratorOutput.model_validate(raw)
@@ -72,7 +79,12 @@ class GeneratorAgent:
         return output
 
     def _build_user_message(
-        self, vault_notes: list, seen_titles: set[str], n_ideas: int
+        self,
+        vault_notes: list,
+        seen_titles: set[str],
+        n_ideas: int,
+        entropy_concept: EntropyConcept | None = None,
+        overused_concepts: list[str] | None = None,
     ) -> str:
         sections = []
 
@@ -88,6 +100,29 @@ class GeneratorAgent:
             sections.append("\n## Previously Generated Ideas (do not repeat)\n")
             for title in sorted(seen_titles):
                 sections.append(f"- {title}")
+
+        # Entropy injection
+        if entropy_concept:
+            sections.append("\n## External Stimulus (MUST integrate)")
+            sections.append(f"**Concept:** {entropy_concept.title} (from {entropy_concept.domain})")
+            sections.append(f"**Summary:** {entropy_concept.summary}")
+            sections.append(
+                "At least one of your generated ideas MUST meaningfully engage with this concept."
+            )
+            sections.append(
+                "Do not mention it superficially — use it as a core ingredient "
+                "in the idea's argument or mechanism."
+            )
+
+        # Overused concepts
+        if overused_concepts:
+            sections.append("\n## Overused Concepts (AVOID)")
+            sections.append(
+                "The following concepts have appeared too frequently in previous runs. "
+                "Actively steer away:"
+            )
+            for concept in overused_concepts:
+                sections.append(f"- {concept}")
 
         # Task
         sections.append(f"\n## Task\n")

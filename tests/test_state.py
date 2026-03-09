@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from core.state import EngineState, PendingExperiment, RunRecord, StateManager
+from core.state import (
+    EngineState,
+    PendingExperiment,
+    QuarantinedNote,
+    RunRecord,
+    StateManager,
+    extract_keywords,
+)
 
 
 @pytest.fixture
@@ -153,3 +160,200 @@ def test_remove_pending_experiment(state_dir):
     mgr.remove_pending_experiment("exp-a")
     assert len(mgr.state.pending_experiments) == 1
     assert mgr.state.pending_experiments[0].slug == "exp-b"
+
+
+# ── extract_keywords tests ──────────────────────────────────────
+
+
+def test_extract_keywords_basic():
+    """Should extract lowercase words >= 4 chars, excluding stopwords."""
+    keywords = extract_keywords("The Quick Brown Fox Jumps Over")
+    assert "quick" in keywords
+    assert "brown" in keywords
+    assert "jumps" in keywords
+    assert "over" not in keywords  # stopword
+    assert "the" not in keywords  # < 4 chars and stopword
+    assert "fox" not in keywords  # < 3 chars
+
+
+def test_extract_keywords_deduplication():
+    """Should not return duplicate keywords."""
+    keywords = extract_keywords("hello hello world world testing testing")
+    assert keywords.count("hello") == 1
+    assert keywords.count("world") == 1
+    assert keywords.count("testing") == 1
+
+
+def test_extract_keywords_splits_on_non_alpha():
+    """Should split on non-alpha characters."""
+    keywords = extract_keywords("machine-learning is great! AI/ML rocks")
+    assert "machine" in keywords
+    assert "learning" in keywords
+    assert "great" in keywords
+    assert "rocks" in keywords
+
+
+def test_extract_keywords_filters_engine_stopwords():
+    """Should filter engine-specific stopwords."""
+    keywords = extract_keywords("novel idea approach system generated")
+    assert "novel" not in keywords
+    assert "approach" not in keywords
+    assert "system" not in keywords
+    assert "generated" not in keywords
+
+
+def test_extract_keywords_empty_input():
+    """Should handle empty or whitespace-only input."""
+    assert extract_keywords("") == []
+    assert extract_keywords("   ") == []
+
+
+# ── Concept tracking tests ──────────────────────────────────────
+
+
+def test_record_concepts(state_dir):
+    """record_concepts should increment keyword frequency counts."""
+    mgr = StateManager(state_dir)
+
+    mgr.record_concepts("machine learning transforms everything")
+    assert mgr.state.concept_frequencies.get("machine", 0) == 1
+    assert mgr.state.concept_frequencies.get("learning", 0) == 1
+    assert mgr.state.concept_frequencies.get("transforms", 0) == 1
+    assert mgr.state.concept_frequencies.get("everything", 0) == 1
+
+    # Record again — counts should increase
+    mgr.record_concepts("machine learning is powerful")
+    assert mgr.state.concept_frequencies["machine"] == 2
+    assert mgr.state.concept_frequencies["learning"] == 2
+
+
+def test_get_overused_concepts(state_dir):
+    """get_overused_concepts should return concepts above threshold."""
+    mgr = StateManager(state_dir)
+
+    # Manually set frequencies
+    mgr.state.concept_frequencies = {
+        "blockchain": 5,
+        "quantum": 4,
+        "neural": 2,
+        "markets": 1,
+    }
+
+    overused = mgr.get_overused_concepts(threshold=3)
+    assert "blockchain" in overused
+    assert "quantum" in overused
+    assert "neural" not in overused
+    assert "markets" not in overused
+    assert overused["blockchain"] == 5
+    assert overused["quantum"] == 4
+
+
+def test_get_overused_concepts_empty(state_dir):
+    """Should return empty dict when no concepts exceed threshold."""
+    mgr = StateManager(state_dir)
+    mgr.state.concept_frequencies = {"word": 1, "another": 2}
+    assert mgr.get_overused_concepts(threshold=3) == {}
+
+
+def test_concept_frequencies_persist(state_dir):
+    """Concept frequencies should survive save/load cycles."""
+    mgr = StateManager(state_dir)
+    mgr.record_concepts("persistent concept tracking works")
+    mgr.save()
+
+    mgr2 = StateManager(state_dir)
+    assert mgr2.state.concept_frequencies.get("persistent", 0) == 1
+    assert mgr2.state.concept_frequencies.get("concept", 0) == 1
+    assert mgr2.state.concept_frequencies.get("tracking", 0) == 1
+    assert mgr2.state.concept_frequencies.get("works", 0) == 1
+
+
+# ── Quarantine lifecycle tests ──────────────────────────────────
+
+
+def test_quarantine_note(state_dir):
+    """quarantine_note should add a note to the quarantine list."""
+    mgr = StateManager(state_dir)
+    mgr.state.run_count = 5
+
+    mgr.quarantine_note("/vault/essays/test.md", cycles=3)
+
+    assert len(mgr.state.quarantined_notes) == 1
+    q = mgr.state.quarantined_notes[0]
+    assert q.path == "/vault/essays/test.md"
+    assert q.quarantined_at_run == 5
+    assert q.release_after_run == 8
+
+
+def test_get_quarantined_paths(state_dir):
+    """get_quarantined_paths should return all quarantined paths."""
+    mgr = StateManager(state_dir)
+    mgr.state.run_count = 1
+
+    mgr.quarantine_note("/vault/a.md", 3)
+    mgr.quarantine_note("/vault/b.md", 3)
+
+    paths = mgr.get_quarantined_paths()
+    assert paths == {"/vault/a.md", "/vault/b.md"}
+
+
+def test_expire_quarantines(state_dir):
+    """expire_quarantines should remove notes past their release run."""
+    mgr = StateManager(state_dir)
+
+    mgr.state.quarantined_notes = [
+        QuarantinedNote(path="/vault/old.md", quarantined_at_run=1, release_after_run=3),
+        QuarantinedNote(path="/vault/new.md", quarantined_at_run=3, release_after_run=6),
+    ]
+
+    # At run 4, only "old" should expire (release_after_run=3 <= run_count=4)
+    mgr.state.run_count = 4
+    mgr.expire_quarantines()
+
+    assert len(mgr.state.quarantined_notes) == 1
+    assert mgr.state.quarantined_notes[0].path == "/vault/new.md"
+
+
+def test_quarantine_full_lifecycle(state_dir):
+    """Full quarantine lifecycle: add, check, expire over multiple runs."""
+    mgr = StateManager(state_dir)
+
+    # Run 1: quarantine a note for 2 cycles
+    mgr.increment_run_count()  # run_count = 1
+    mgr.quarantine_note("/vault/essay.md", cycles=2)
+    assert "/vault/essay.md" in mgr.get_quarantined_paths()
+
+    # Run 2: still quarantined
+    mgr.increment_run_count()  # run_count = 2
+    mgr.expire_quarantines()
+    assert "/vault/essay.md" in mgr.get_quarantined_paths()
+
+    # Run 3: still quarantined (release_after_run=3, so 3 is not > 3)
+    mgr.increment_run_count()  # run_count = 3
+    mgr.expire_quarantines()
+    assert "/vault/essay.md" not in mgr.get_quarantined_paths()
+
+
+def test_quarantine_persists_across_save_load(state_dir):
+    """Quarantined notes should survive save/load cycles."""
+    mgr = StateManager(state_dir)
+    mgr.state.run_count = 5
+    mgr.quarantine_note("/vault/test.md", 3)
+    mgr.save()
+
+    mgr2 = StateManager(state_dir)
+    assert len(mgr2.state.quarantined_notes) == 1
+    assert mgr2.state.quarantined_notes[0].path == "/vault/test.md"
+    assert mgr2.state.run_count == 5
+
+
+def test_increment_run_count(state_dir):
+    """increment_run_count should increase run counter."""
+    mgr = StateManager(state_dir)
+    assert mgr.state.run_count == 0
+
+    mgr.increment_run_count()
+    assert mgr.state.run_count == 1
+
+    mgr.increment_run_count()
+    assert mgr.state.run_count == 2
