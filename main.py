@@ -322,7 +322,10 @@ def run_once(
     startup_table.add_column("Name", style="cyan", max_width=40)
     startup_table.add_column("Score", justify="right")
     startup_table.add_column("Verdict")
+    startup_table.add_column("Type", style="dim")
     startup_table.add_column("Reasoning", max_width=50)
+
+    startup_rows: list[tuple] = []
 
     for idea in output.startup_ideas:
         idea_dict = idea.model_dump()
@@ -333,12 +336,7 @@ def run_once(
             )
 
         verdict_style = "green" if judgment.verdict == "viable" else "red"
-        startup_table.add_row(
-            judgment.idea_name,
-            f"{judgment.weighted_score:.2f}",
-            f"[{verdict_style}]{judgment.verdict}[/{verdict_style}]",
-            judgment.reasoning[:50] + "..." if len(judgment.reasoning) > 50 else judgment.reasoning,
-        )
+        exp_type = ""
 
         if judgment.verdict == "viable":
             startups_approved += 1
@@ -351,11 +349,13 @@ def run_once(
                 with console.status(f"  Scaffolding experiment: {idea.name}..."):
                     pending = startup_judge.scaffold_experiment(idea_dict)
 
+                exp_type = pending.experiment_type
                 state_mgr.add_pending_experiment(pending)
                 console.print(
                     Panel(
                         f"[green bold]{idea.name}[/]\n"
                         f"Score: {judgment.weighted_score:.2f}\n"
+                        f"Type: {pending.experiment_type}\n"
                         f"Experiment: {pending.experiment_path}\n"
                         f"Eval after: {pending.eval_after}",
                         title="Viable Startup — Experiment Scaffolded",
@@ -373,6 +373,14 @@ def run_once(
                     "startup",
                     run_id,
                 )
+
+        startup_table.add_row(
+            judgment.idea_name,
+            f"{judgment.weighted_score:.2f}",
+            f"[{verdict_style}]{judgment.verdict}[/{verdict_style}]",
+            exp_type or "-",
+            judgment.reasoning[:50] + "..." if len(judgment.reasoning) > 50 else judgment.reasoning,
+        )
 
     console.print(startup_table)
 

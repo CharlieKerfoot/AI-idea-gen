@@ -56,6 +56,7 @@ class PendingExperiment(BaseModel):
     hypothesis: str
     falsification_criteria: str
     experiment_path: str
+    experiment_type: str = ""
 
 
 class QuarantinedNote(BaseModel):

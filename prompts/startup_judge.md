@@ -63,10 +63,28 @@ Choose the most appropriate type:
 - **`llm_pipeline`** — The core mechanic is an AI-powered workflow (prompt chain, RAG, agent)
 
 ### Constraints
-- Code must use only stdlib + common packages (requests, fastapi, pandas, click, rich, anthropic, openai)
+- Code must use only stdlib + common packages (requests, fastapi, pandas, click, rich, anthropic, openai, matplotlib)
 - The experiment must be runnable with `python src/main.py` or `python -m http.server` (for HTML)
 - Include clear setup instructions in the README
 - EVAL_CRITERIA.md must have explicit, measurable pass/fail criteria
+
+### Evidence Chart (REQUIRED)
+
+Every experiment **MUST** generate a chart that visually demonstrates whether the hypothesis was supported or refuted. The chart should be saved as `results.png` in the experiment's root folder (one level above `src/`).
+
+Implementation:
+- Use `matplotlib` to create the chart in the experiment's main script
+- Save with `plt.savefig("results.png", dpi=150, bbox_inches="tight")` — use a path relative to the script's parent directory so it lands in the experiment root: `Path(__file__).resolve().parent.parent / "results.png"`
+- The chart should make the hypothesis verdict **visually obvious** — a reader should be able to glance at it and know if the experiment passed or failed
+- Choose the chart type that best fits the data:
+  - **Bar chart** for comparing categories or A/B results
+  - **Line chart** for time series or progression
+  - **Scatter plot** for correlation hypotheses
+  - **Histogram** for distribution analysis
+- Include a clear title stating the hypothesis, labeled axes, and a horizontal threshold/target line where applicable
+- Use green/red color coding to indicate pass/fail regions where appropriate
+
+For `html_prototype` experiments, generate the chart with JavaScript (Chart.js via CDN) embedded in the HTML instead of matplotlib.
 
 **Output format for Mode B:**
 
@@ -74,7 +92,7 @@ Choose the most appropriate type:
 {
   "experiment_type": "cli_script",
   "slug": "idea-name-slug",
-  "readme_content": "# Experiment: ...\n\n## Hypothesis\n...\n\n## Setup\n...",
+  "readme_content": "# Experiment: ...\n\n## Hypothesis\n...\n\n## Setup\n...\n\n## Results\nRun the experiment and see `results.png` for the evidence chart.",
   "eval_criteria_content": "# Evaluation Criteria\n\n## Pass Criteria\n...\n\n## Fail Criteria\n...",
   "implementation_files": [
     {

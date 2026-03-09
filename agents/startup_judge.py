@@ -123,14 +123,14 @@ class StartupJudgeAgent:
         ]
 
         slug = self.scaffolder.make_slug(idea.get("name", "experiment"))
+        experiment_type = raw.get("experiment_type", "cli_script")
         scaffold = ExperimentScaffold(
-            experiment_type=raw.get("experiment_type", "cli_script"),
+            experiment_type=experiment_type,
             slug=slug,
             readme_content=raw.get("readme_content", ""),
             eval_criteria_content=raw.get("eval_criteria_content", ""),
             implementation_files=impl_files,
         )
-
         now = datetime.now()
         pending = PendingExperiment(
             slug=slug,
@@ -140,6 +140,7 @@ class StartupJudgeAgent:
             hypothesis=idea.get("experiment_hypothesis", ""),
             falsification_criteria=idea.get("falsification_criteria", ""),
             experiment_path=str(self.scaffolder.experiments_path / slug),
+            experiment_type=experiment_type,
         )
 
         meta = pending.model_dump(mode="json")
