@@ -26,6 +26,7 @@ class ExperimentScaffold(BaseModel):
     readme_content: str
     eval_criteria_content: str
     implementation_files: list[ExperimentFile] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
 
 
 class ExperimentScaffolder:
@@ -48,6 +49,11 @@ class ExperimentScaffolder:
         exp_dir = self.experiments_path / scaffold.slug
         src_dir = exp_dir / "src"
         src_dir.mkdir(parents=True, exist_ok=True)
+
+        # pyproject.toml
+        (exp_dir / "pyproject.toml").write_text(
+            self._build_pyproject_toml(scaffold), encoding="utf-8"
+        )
 
         # README.md
         (exp_dir / "README.md").write_text(
@@ -72,6 +78,19 @@ class ExperimentScaffolder:
 
         return exp_dir
 
+    @staticmethod
+    def _build_pyproject_toml(scaffold: ExperimentScaffold) -> str:
+        """Generate a pyproject.toml for the experiment."""
+        deps = scaffold.dependencies or []
+        deps_str = ", ".join(f'"{d}"' for d in deps)
+        return (
+            f'[project]\n'
+            f'name = "{scaffold.slug}"\n'
+            f'version = "0.1.0"\n'
+            f'requires-python = ">=3.11"\n'
+            f'dependencies = [{deps_str}]\n'
+        )
+
     def read_experiment(self, slug: str) -> dict:
         """Read experiment files for evaluation."""
         exp_dir = self.experiments_path / slug
@@ -81,7 +100,7 @@ class ExperimentScaffolder:
         result = {"slug": slug, "files": {}}
 
         # Read known files
-        for name in ["README.md", "EVAL_CRITERIA.md", ".engine-meta.json"]:
+        for name in ["pyproject.toml", "README.md", "EVAL_CRITERIA.md", ".engine-meta.json"]:
             fpath = exp_dir / name
             if fpath.exists():
                 result["files"][name] = fpath.read_text(encoding="utf-8")

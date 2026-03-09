@@ -62,18 +62,30 @@ Choose the most appropriate type:
 - **`data_analysis`** — The hypothesis depends on a data-driven assumption that can be validated with existing data
 - **`llm_pipeline`** — The core mechanic is an AI-powered workflow (prompt chain, RAG, agent)
 
+### Package Management (uv)
+
+Every experiment is a self-contained Python project managed with **uv**. The scaffolder will automatically generate a `pyproject.toml` from the dependencies you specify. The user should only need to run:
+
+```bash
+cd <experiment-folder>
+uv sync
+uv run src/main.py
+```
+
+You must specify which packages the experiment needs in the `dependencies` array. Only include packages actually imported by the code — do not add unnecessary dependencies. Common choices: `requests`, `fastapi`, `uvicorn`, `pandas`, `click`, `rich`, `anthropic`, `openai`, `matplotlib`.
+
 ### Constraints
-- Code must use only stdlib + common packages (requests, fastapi, pandas, click, rich, anthropic, openai, matplotlib)
-- The experiment must be runnable with `python src/main.py` or `python -m http.server` (for HTML)
-- Include clear setup instructions in the README
+- The experiment must be runnable with `uv run src/main.py` (or `uv run python -m http.server` for HTML prototypes)
+- Include clear setup instructions in the README showing `uv sync` then `uv run src/main.py`
 - EVAL_CRITERIA.md must have explicit, measurable pass/fail criteria
+- Do NOT include `import` statements for packages not listed in `dependencies` — the code must actually run after `uv sync`
 
 ### Evidence Chart (REQUIRED)
 
 Every experiment **MUST** generate a chart that visually demonstrates whether the hypothesis was supported or refuted. The chart should be saved as `results.png` in the experiment's root folder (one level above `src/`).
 
 Implementation:
-- Use `matplotlib` to create the chart in the experiment's main script
+- Use `matplotlib` to create the chart in the experiment's main script (add `"matplotlib"` to `dependencies`)
 - Save with `plt.savefig("results.png", dpi=150, bbox_inches="tight")` — use a path relative to the script's parent directory so it lands in the experiment root: `Path(__file__).resolve().parent.parent / "results.png"`
 - The chart should make the hypothesis verdict **visually obvious** — a reader should be able to glance at it and know if the experiment passed or failed
 - Choose the chart type that best fits the data:
@@ -84,7 +96,7 @@ Implementation:
 - Include a clear title stating the hypothesis, labeled axes, and a horizontal threshold/target line where applicable
 - Use green/red color coding to indicate pass/fail regions where appropriate
 
-For `html_prototype` experiments, generate the chart with JavaScript (Chart.js via CDN) embedded in the HTML instead of matplotlib.
+For `html_prototype` experiments, generate the chart with JavaScript (Chart.js via CDN) embedded in the HTML instead of matplotlib — you may omit `matplotlib` from `dependencies` in this case.
 
 **Output format for Mode B:**
 
@@ -92,7 +104,8 @@ For `html_prototype` experiments, generate the chart with JavaScript (Chart.js v
 {
   "experiment_type": "cli_script",
   "slug": "idea-name-slug",
-  "readme_content": "# Experiment: ...\n\n## Hypothesis\n...\n\n## Setup\n...\n\n## Results\nRun the experiment and see `results.png` for the evidence chart.",
+  "dependencies": ["requests", "matplotlib"],
+  "readme_content": "# Experiment: ...\n\n## Hypothesis\n...\n\n## Setup\n```bash\nuv sync\nuv run src/main.py\n```\n\n## Results\nSee `results.png` for the evidence chart.",
   "eval_criteria_content": "# Evaluation Criteria\n\n## Pass Criteria\n...\n\n## Fail Criteria\n...",
   "implementation_files": [
     {

@@ -130,6 +130,7 @@ class StartupJudgeAgent:
             readme_content=raw.get("readme_content", ""),
             eval_criteria_content=raw.get("eval_criteria_content", ""),
             implementation_files=impl_files,
+            dependencies=raw.get("dependencies", []),
         )
         now = datetime.now()
         pending = PendingExperiment(
